@@ -1,5 +1,6 @@
 from rest_framework import serializers
-from .models import Conversation, ConversationMember
+from django.urls import reverse
+from .models import Conversation, ConversationMember, Message
 
 
 class ConversationMemberSerializer(serializers.ModelSerializer):
@@ -84,3 +85,61 @@ class ConversationSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at"
         ]
+
+
+class MessageSerializer(serializers.ModelSerializer):
+    sender_id = serializers.UUIDField(source="sender.id", read_only=True)
+    sender_username = serializers.CharField(source="sender.username", read_only=True)
+    file_name = serializers.CharField(source="attachment_name", read_only=True)
+    file_content_type = serializers.CharField(
+        source="attachment_content_type",
+        read_only=True
+    )
+    file_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Message
+        fields = [
+            "id",
+            "conversation",
+            "sender_id",
+            "sender_username",
+            "content",
+            "file_name",
+            "file_content_type",
+            "file_url",
+            "created_at",
+        ]
+        read_only_fields = fields
+
+    def get_file_url(self, obj):
+        if not obj.attachment:
+            return None
+        
+        # Obtenemos el request del contexto del serializador
+        request = self.context.get('request')
+        file_url = obj.attachment.url
+        
+        if request is not None:
+            return request.build_absolute_uri(file_url)
+        return file_url
+
+
+class CreateMessageSerializer(serializers.Serializer):
+    content = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=10000,
+        trim_whitespace=False
+    )
+    attachment = serializers.FileField(required=False, allow_empty_file=False)
+
+    def validate_attachment(self, value):
+        if value.size > 25 * 1024 * 1024:
+            raise serializers.ValidationError("Files cannot exceed 25 MB")
+        return value
+
+    def validate(self, attrs):
+        if not attrs.get("content", "").strip() and not attrs.get("attachment"):
+            raise serializers.ValidationError("A message needs text or an attachment")
+        return attrs

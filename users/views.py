@@ -5,8 +5,10 @@ from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.exceptions import TokenError
+from django.contrib.auth import get_user_model
+from django.db.models import Q
 
-from .serializers import ChangeEmailSerializer, ChangePasswordSerializer, ChangeUsernameSerializer, CookieTokenRefreshSerializer, LoginSerializer, RegisterSerializer, UserSerializer
+from .serializers import ChangeEmailSerializer, ChangePasswordSerializer, ChangeUsernameSerializer, CookieTokenRefreshSerializer, LoginSerializer, RegisterSerializer, UserSerializer, UserSearchSerializer
 # Create your views here.
 
 def set_auth_cookies(response, refresh):
@@ -200,6 +202,25 @@ class ChangeEmailView(APIView):
         user = serializer.save()
 
         return Response(UserSerializer(user).data, status=status.HTTP_200_OK)
+
+
+class UserSearchView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        query = request.query_params.get("q", "").strip()
+        if len(query) < 2:
+            return Response({"detail": "Search query must contain at least 2 characters"}, status=status.HTTP_400_BAD_REQUEST)
+
+        User = get_user_model()
+        users = User.objects.filter(
+            Q(username__icontains=query) | Q(name__icontains=query)
+        ).exclude(pk=request.user.pk).order_by("username")[:20]
+        return Response(UserSearchSerializer(
+            users,
+            many=True,
+            context={"request": request}
+        ).data)
 
 
 

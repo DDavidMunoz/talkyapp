@@ -90,6 +90,13 @@ class UserSerializer(serializers.ModelSerializer):
             "last_seen"
         ]
 
+
+class UserSearchSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ["id", "username", "name", "avatar", "bio", "last_seen"]
+        read_only_fields = fields
+
 class ChangeUsernameSerializer(serializers.Serializer):
     current_password = serializers.CharField(write_only=True, min_length=8)
     username = serializers.CharField(max_length=150)

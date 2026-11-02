@@ -77,3 +77,42 @@ class ConversationMember(models.Model):
 
     def __str__(self):
         return f"{self.user} -> {self.conversation}"
+
+
+class Message(models.Model):
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False
+    )
+    conversation = models.ForeignKey(
+        Conversation,
+        on_delete=models.CASCADE,
+        related_name="messages"
+    )
+    sender = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="sent_messages"
+    )
+    content = models.TextField(blank=True)
+    attachment = models.FileField(
+        upload_to="conversation_files/",
+        blank=True,
+        null=True
+    )
+    attachment_name = models.CharField(max_length=255, blank=True)
+    attachment_content_type = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+        indexes = [
+            models.Index(
+                fields=["conversation", "created_at"],
+                name="conv_msg_conv_created_idx"
+            ),
+        ]
+
+    def __str__(self):
+        return f"Message {self.pk} in {self.conversation_id}"
