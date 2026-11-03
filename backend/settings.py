@@ -27,7 +27,14 @@ SECRET_KEY = 'django-insecure-$)dpq_dmre^a*43^osscmz*8=o^8_83vqni4(qy3==o)9!yt9l
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.getenv(
+        "ALLOWED_HOSTS",
+        "localhost,127.0.0.1,[::1],localhost:4200,127.0.0.1:4200,10.15.154.157:4200",
+    ).split(",")
+    if host.strip()
+]
 
 
 # Application definition
@@ -78,18 +85,13 @@ TEMPLATES = [
 WSGI_APPLICATION = 'backend.wsgi.application'
 ASGI_APPLICATION = 'backend.asgi.application'
 
-REDIS_URL = os.getenv("REDIS_URL")
-if REDIS_URL:
-    CHANNEL_LAYERS = {
-        "default": {
-            "BACKEND": "channels_redis.core.RedisChannelLayer",
-            "CONFIG": {"hosts": [REDIS_URL]},
-        }
+REDIS_URL = os.getenv("REDIS_URL") or "redis://127.0.0.1:6379/0"
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {"hosts": [REDIS_URL]},
     }
-else:
-    CHANNEL_LAYERS = {
-        "default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}
-    }
+}
 
 
 # Database

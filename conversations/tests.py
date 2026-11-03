@@ -1,12 +1,21 @@
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase, override_settings
+from django.test import AsyncClient, TestCase, TransactionTestCase, override_settings
 from rest_framework.test import APIClient
+from channels.testing import WebsocketCommunicator
+from channels.db import database_sync_to_async
+from rest_framework_simplejwt.tokens import AccessToken
 import tempfile
 
+from backend.asgi import application
 from .models import Conversation, ConversationMember, Message
 
 
+@override_settings(
+	CHANNEL_LAYERS={
+		"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}
+	}
+)
 class ConversationMessageTests(TestCase):
 	def setUp(self):
 		User = get_user_model()
@@ -112,3 +121,59 @@ class ConversationMessageTests(TestCase):
 				self.client.force_authenticate(outsider)
 				denied = self.client.get(file_url)
 				self.assertEqual(denied.status_code, 404)
+
+
+@override_settings(
+	ALLOWED_HOSTS=["testserver"],
+)
+class ConversationWebSocketTests(TransactionTestCase):
+	async def test_http_message_is_broadcast_to_connected_chat(self):
+		@database_sync_to_async
+		def create_conversation():
+			User = get_user_model()
+			sender = User.objects.create_user(
+				username="ws-sender",
+				email="ws-sender@example.com",
+				name="WebSocket Sender",
+			)
+			recipient = User.objects.create_user(
+				username="ws-recipient",
+				email="ws-recipient@example.com",
+				name="WebSocket Recipient",
+			)
+			conversation = Conversation.objects.create()
+			ConversationMember.objects.create(conversation=conversation, user=sender)
+			ConversationMember.objects.create(conversation=conversation, user=recipient)
+			return sender.pk, recipient.pk, conversation.pk
+
+		sender_id, recipient_id, conversation_id = await create_conversation()
+		sender = await database_sync_to_async(get_user_model().objects.get)(pk=sender_id)
+		recipient = await database_sync_to_async(get_user_model().objects.get)(pk=recipient_id)
+
+		token = AccessToken.for_user(recipient)
+		communicator = WebsocketCommunicator(
+			application,
+			f"/ws/conversations/{conversation_id}/",
+			headers=[
+				(b"cookie", f"access_token={token}".encode()),
+				(b"origin", b"http://testserver"),
+			],
+		)
+		connected, connection_result = await communicator.connect()
+		self.assertTrue(connected, f"WebSocket rejected: {connection_result!r}")
+
+		try:
+			client = AsyncClient()
+			client.cookies["access_token"] = str(AccessToken.for_user(sender))
+			response = await client.post(
+				f"/api/conversations/{conversation_id}/messages/",
+				{"content": "Instant message"},
+			)
+			self.assertEqual(response.status_code, 201)
+			broadcast = await communicator.receive_json_from()
+			self.assertEqual(broadcast["content"], "Instant message")
+			self.assertEqual(broadcast["conversation"], str(conversation_id))
+			self.assertEqual(broadcast["sender_id"], str(sender_id))
+			self.assertEqual(broadcast["sender_username"], "ws-sender")
+		finally:
+			await communicator.disconnect()
