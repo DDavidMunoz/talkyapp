@@ -33,3 +33,37 @@ class UserSearchTests(TestCase):
 		response = self.client.get("/api/users/search/?q=t")
 
 		self.assertEqual(response.status_code, 400)
+
+
+class LoginTests(TestCase):
+	def setUp(self):
+		User = get_user_model()
+		self.user = User.objects.create_user(
+			username="talky_login_test",
+			email="login-test@example.com",
+			password="test-password-123",
+			name="Login Test"
+		)
+
+	def test_login_accepts_username(self):
+		client = APIClient()
+		response = client.post(
+			"/api/users/login/",
+			{"username": self.user.username, "password": "test-password-123"},
+			format="json"
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertIn("access_token", response.cookies)
+		self.assertTrue(response.cookies["access_token"]["httponly"])
+
+	def test_login_accepts_email_case_insensitively(self):
+		client = APIClient()
+		response = client.post(
+			"/api/users/login/",
+			{"username": "LOGIN-TEST@EXAMPLE.COM", "password": "test-password-123"},
+			format="json"
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertIn("access_token", response.cookies)

@@ -31,9 +31,19 @@ class LoginSerializer(serializers.Serializer):
     )
 
     def validate(self, attrs):
+        identifier = attrs["username"].strip()
+        if "@" in identifier:
+            username = User.objects.filter(
+                email__iexact=identifier
+            ).values_list("username", flat=True).first()
+        else:
+            username = User.objects.filter(
+                username__iexact=identifier
+            ).values_list("username", flat=True).first()
+
         user = authenticate(
-            username=attrs["username"],
-            password=attrs["password"]
+            username=username or identifier,
+            password=attrs["password"],
         )
 
         if user is None:

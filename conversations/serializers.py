@@ -28,6 +28,7 @@ class ConversationListSerializer(serializers.ModelSerializer):
         many=True,
         read_only=True
     )
+    last_message = serializers.SerializerMethodField()
 
     class Meta:
         model = Conversation
@@ -36,7 +37,8 @@ class ConversationListSerializer(serializers.ModelSerializer):
             "type",
             "name",
             "members",
-            "updated_at"
+            "updated_at",
+            "last_message",
         ]
 
         read_only_fields = [
@@ -44,6 +46,12 @@ class ConversationListSerializer(serializers.ModelSerializer):
             "members",
             "udpated_at"
         ]
+
+    def get_last_message(self, obj):
+        messages = getattr(obj, "latest_messages", None)
+        if not messages:
+            return None
+        return MessageSerializer(messages[0], context=self.context).data
 
 
 class CreateDirectConversationSerializer(serializers.Serializer):
@@ -115,14 +123,16 @@ class MessageSerializer(serializers.ModelSerializer):
     def get_file_url(self, obj):
         if not obj.attachment:
             return None
-        
-        # Obtenemos el request del contexto del serializador
+
+        file_url = reverse(
+            "message-attachment",
+            kwargs={
+                "conversation_id": obj.conversation_id,
+                "pk": obj.pk,
+            },
+        )
         request = self.context.get('request')
-        file_url = obj.attachment.url
-        
-        if request is not None:
-            return request.build_absolute_uri(file_url)
-        return file_url
+        return request.build_absolute_uri(file_url) if request is not None else file_url
 
 
 class CreateMessageSerializer(serializers.Serializer):

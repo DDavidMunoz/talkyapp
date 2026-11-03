@@ -44,6 +44,35 @@ class ConversationMessageTests(TestCase):
 		self.assertEqual(history.status_code, 200)
 		self.assertEqual(history.data["results"][0]["content"], "Hello")
 
+	def test_conversation_list_includes_latest_message_preview(self):
+		Message.objects.create(
+			conversation=self.conversation,
+			sender=self.user,
+			content="My earlier message"
+		)
+		latest_message = Message.objects.create(
+			conversation=self.conversation,
+			sender=self.other_user,
+			content="A new message for you"
+		)
+
+		response = self.client.get("/api/conversations/")
+
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(len(response.data), 1)
+		self.assertEqual(
+			response.data[0]["last_message"]["content"],
+			"A new message for you"
+		)
+		self.assertEqual(
+			str(response.data[0]["last_message"]["sender_id"]),
+			str(self.other_user.pk)
+		)
+		self.assertEqual(
+			str(response.data[0]["last_message"]["id"]),
+			str(latest_message.pk)
+		)
+
 	def test_non_member_cannot_read_messages(self):
 		outsider = get_user_model().objects.create_user(
 			username="outsider",

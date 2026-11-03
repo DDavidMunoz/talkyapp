@@ -9,7 +9,7 @@ from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
 from django.http import FileResponse
-from django.db.models import Q
+from django.db.models import Prefetch, Q
 from django.utils import timezone
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
@@ -32,9 +32,23 @@ class ConversationListCreateView(APIView):
     def get(self, request):
         conversations = Conversation.objects.filter(
             members__user = request.user
-        ).prefetch_related("members__user").order_by("-updated_at").distinct()
+        ).prefetch_related(
+            "members__user",
+            Prefetch(
+                "messages",
+                queryset=Message.objects.select_related("sender").order_by(
+                    "-created_at",
+                    "-id"
+                )[:1],
+                to_attr="latest_messages",
+            ),
+        ).order_by("-updated_at").distinct()
 
-        serializer = ConversationListSerializer(conversations, many=True)
+        serializer = ConversationListSerializer(
+            conversations,
+            many=True,
+            context={"request": request},
+        )
 
         return Response(serializer.data)
 
@@ -174,10 +188,20 @@ class ConversationMessagesView(APIView):
             ),
         )
         Conversation.objects.filter(pk=conversation.pk).update(updated_at=timezone.now())
+
         message_data = MessageSerializer(
             message,
             context={"request": request}
         ).data
+
+        # Convertimos los UUIDs a string para evitar errores de serialización JSON en el WebSocket
+        if isinstance(message_data.get('id'), UUID):
+            message_data['id'] = str(message_data['id'])
+        if isinstance(message_data.get('conversation'), UUID):
+            message_data['conversation'] = str(message_data['conversation'])
+        if isinstance(message_data.get('sender_id'), UUID):
+            message_data['sender_id'] = str(message_data['sender_id'])
+
         try:
             async_to_sync(get_channel_layer().group_send)(
                 f"conversation_{conversation.pk}",
@@ -185,6 +209,7 @@ class ConversationMessagesView(APIView):
             )
         except Exception:
             logger.exception("Message %s was saved but could not be broadcast", message.pk)
+
         return Response(message_data, status=status.HTTP_201_CREATED)
 
 
