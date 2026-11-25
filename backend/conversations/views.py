@@ -9,7 +9,7 @@ from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
 from django.http import FileResponse
-from django.db.models import Prefetch, Q
+from django.db.models import F, Prefetch, Q
 from django.utils import timezone
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
@@ -26,12 +26,29 @@ from .serializers import (
 logger = logging.getLogger(__name__)
 
 
+def get_visible_membership(request, conversation_id):
+    return get_object_or_404(
+        ConversationMember.objects.select_related("conversation").filter(
+            user=request.user,
+            left_at__isnull=True,
+        ).filter(
+            Q(hidden_at__isnull=True)
+            | Q(conversation__updated_at__gt=F("hidden_at"))
+        ),
+        conversation_id=conversation_id,
+    )
+
+
 class ConversationListCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         conversations = Conversation.objects.filter(
-            members__user = request.user
+            Q(members__user=request.user, members__left_at__isnull=True)
+            & (
+                Q(members__hidden_at__isnull=True)
+                | Q(updated_at__gt=F("members__hidden_at"))
+            )
         ).prefetch_related(
             "members__user",
             Prefetch(
@@ -79,6 +96,10 @@ class ConversationListCreateView(APIView):
         )
 
         if conversation:
+            ConversationMember.objects.filter(
+                conversation=conversation,
+                user=request.user,
+            ).update(hidden_at=None)
             return Response(
                 ConversationSerializer(
                     conversation,
@@ -119,7 +140,10 @@ class ConversationDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get_conversation(self, request, pk):
-        return get_object_or_404(Conversation.objects.prefetch_related("members__user"), pk=pk, members__user=request.user)
+        membership = get_visible_membership(request, pk)
+        return Conversation.objects.prefetch_related("members__user").get(
+            pk=membership.conversation_id
+        )
 
     def get(self, request, pk):
         conversation = self.get_conversation(request, pk)
@@ -131,7 +155,26 @@ class ConversationDetailView(APIView):
 
     def delete(self, request, pk):
         conversation = self.get_conversation(request, pk)
-        conversation.delete()
+        membership = get_object_or_404(
+            ConversationMember,
+            conversation=conversation,
+            user=request.user,
+            left_at__isnull=True,
+        )
+        now = timezone.now()
+        membership.hidden_at = now
+        membership.cleared_at = now
+        membership.save(update_fields=["hidden_at", "cleared_at"])
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ConversationClearView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, conversation_id):
+        membership = get_visible_membership(request, conversation_id)
+        membership.cleared_at = timezone.now()
+        membership.save(update_fields=["cleared_at"])
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -139,14 +182,11 @@ class ConversationMessagesView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get_conversation(self, request, conversation_id):
-        conversations = Conversation.objects.filter(
-            members__user=request.user,
-            members__left_at__isnull=True
-        )
-        return get_object_or_404(conversations, pk=conversation_id)
+        return get_visible_membership(request, conversation_id)
 
     def get(self, request, conversation_id):
-        conversation = self.get_conversation(request, conversation_id)
+        membership = self.get_conversation(request, conversation_id)
+        conversation = membership.conversation
         try:
             limit = int(request.query_params.get("limit", 50))
         except ValueError:
@@ -156,6 +196,8 @@ class ConversationMessagesView(APIView):
         limit = min(limit, 100)
 
         messages = Message.objects.filter(conversation=conversation).select_related("sender")
+        if membership.cleared_at:
+            messages = messages.filter(created_at__gt=membership.cleared_at)
         cursor = request.query_params.get("before")
         if cursor:
             try:
@@ -184,7 +226,7 @@ class ConversationMessagesView(APIView):
         return Response({"results": serializer.data, "next_before": next_before})
 
     def post(self, request, conversation_id):
-        conversation = self.get_conversation(request, conversation_id)
+        conversation = self.get_conversation(request, conversation_id).conversation
         serializer = CreateMessageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         attachment = serializer.validated_data.get("attachment")
@@ -229,17 +271,14 @@ class MessageAttachmentView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, conversation_id, pk):
-        conversation = get_object_or_404(
-            Conversation.objects.filter(
-                members__user=request.user,
-                members__left_at__isnull=True
-            ),
-            pk=conversation_id
-        )
+        membership = get_visible_membership(request, conversation_id)
+        conversation = membership.conversation
         message = get_object_or_404(
             Message.objects.filter(conversation=conversation).exclude(attachment=""),
             pk=pk
         )
+        if membership.cleared_at and message.created_at <= membership.cleared_at:
+            return Response(status=status.HTTP_404_NOT_FOUND)
         response = FileResponse(
             message.attachment.open("rb"),
             as_attachment=True,

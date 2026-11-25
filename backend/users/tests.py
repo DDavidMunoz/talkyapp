@@ -1,9 +1,11 @@
 from io import BytesIO
 import tempfile
+from datetime import timedelta
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
+from django.utils import timezone
 from PIL import Image
 from rest_framework.test import APIClient
 
@@ -46,6 +48,17 @@ class UserSearchTests(TestCase):
 
 		self.assertEqual(response.status_code, 200)
 		self.assertEqual(response.data[0]["avatar"], "/media/avatars/friend.png")
+
+	def test_search_reports_online_only_for_a_recent_heartbeat(self):
+		self.match.last_seen = timezone.now()
+		self.match.save(update_fields=["last_seen"])
+		response = self.client.get("/api/users/search/?q=talky")
+		self.assertTrue(response.data[0]["is_online"])
+
+		self.match.last_seen = timezone.now() - timedelta(seconds=60)
+		self.match.save(update_fields=["last_seen"])
+		response = self.client.get("/api/users/search/?q=talky")
+		self.assertFalse(response.data[0]["is_online"])
 
 	def test_search_requires_two_characters(self):
 		response = self.client.get("/api/users/search/?q=t")

@@ -2,11 +2,13 @@ import { HttpClient } from '@angular/common/http';
 import { Injectable, inject, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { apiErrorMessage } from './api-error';
+import { PresenceService } from './presence.service';
 
 export interface ConversationMember {
   user_id: string;
   username: string;
   avatar?: string | null;
+  is_online?: boolean;
   role: string;
   joined_at: string;
   left_at: string | null;
@@ -28,6 +30,7 @@ export interface SearchUser {
   avatar: string | null;
   bio: string;
   last_seen: string | null;
+  is_online: boolean;
 }
 
 export interface ChatMessage {
@@ -62,6 +65,7 @@ function isReadState(value: unknown): value is Record<string, string> {
 @Injectable({ providedIn: 'root' })
 export class ConversationService {
   private readonly http = inject(HttpClient);
+  private readonly presence = inject(PresenceService);
   readonly conversations = signal<Conversation[]>([]);
   readonly loading = signal(false);
   readonly error = signal('');
@@ -85,6 +89,9 @@ export class ConversationService {
           })
         );
         this.conversations.set(conversations);
+        this.presence.subscribeToConversations(
+          conversations.map((conversation) => conversation.id)
+        );
       } catch (error) {
         this.error.set(
           apiErrorMessage(error, 'No se pudieron cargar tus conversaciones.')
@@ -192,10 +199,14 @@ export class ConversationService {
         { withCredentials: true }
       )
     );
-    this.conversations.update((current) => [
+    const updatedConversations = [
       conversation,
-      ...current.filter((item) => item.id !== conversation.id),
-    ]);
+      ...this.conversations().filter((item) => item.id !== conversation.id),
+    ];
+    this.conversations.set(updatedConversations);
+    this.presence.subscribeToConversations(
+      updatedConversations.map((item) => item.id)
+    );
     return conversation;
   }
 
@@ -215,6 +226,40 @@ export class ConversationService {
         withCredentials: true,
       })
     );
+  }
+
+  async deleteConversation(conversationId: string): Promise<void> {
+    await firstValueFrom(
+      this.http.delete<void>(`/api/conversations/${conversationId}/`, {
+        withCredentials: true,
+      })
+    );
+    const updatedConversations = this.conversations().filter(
+      (conversation) => conversation.id !== conversationId
+    );
+    this.conversations.set(updatedConversations);
+    this.presence.subscribeToConversations(
+      updatedConversations.map((conversation) => conversation.id)
+    );
+    this.clearReadState(conversationId);
+  }
+
+  async clearChat(conversationId: string): Promise<void> {
+    await firstValueFrom(
+      this.http.post<void>(
+        `/api/conversations/${conversationId}/clear/`,
+        {},
+        { withCredentials: true }
+      )
+    );
+    this.conversations.update((current) =>
+      current.map((conversation) =>
+        conversation.id === conversationId
+          ? { ...conversation, last_message: null }
+          : conversation
+      )
+    );
+    this.clearReadState(conversationId);
   }
 
   async sendMessage(
@@ -240,5 +285,19 @@ export class ConversationService {
 
   attachmentUrl(conversationId: string, messageId: string): string {
     return `/api/conversations/${conversationId}/messages/${messageId}/file/`;
+  }
+
+  private clearReadState(conversationId: string): void {
+    const next = { ...this.readMessageIds() };
+    delete next[conversationId];
+    this.readMessageIds.set(next);
+    if (!this.readStateKey) {
+      return;
+    }
+    try {
+      localStorage.setItem(this.readStateKey, JSON.stringify(next));
+    } catch (error) {
+      console.warn('Could not save TalkyApp read state.', error);
+    }
   }
 }

@@ -3,6 +3,7 @@ from rest_framework import serializers
 from rest_framework_simplejwt.token_blacklist.models import OutstandingToken, BlacklistedToken
 
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
+from .presence import is_user_online
 User = get_user_model()
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -110,11 +111,15 @@ class UserSerializer(serializers.ModelSerializer):
 
 class UserSearchSerializer(serializers.ModelSerializer):
     avatar = RelativeImageField(read_only=True)
+    is_online = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ["id", "username", "name", "avatar", "bio", "last_seen"]
+        fields = ["id", "username", "name", "avatar", "bio", "last_seen", "is_online"]
         read_only_fields = fields
+
+    def get_is_online(self, obj):
+        return is_user_online(obj)
 
 
 class ChangeUsernameSerializer(serializers.Serializer):

@@ -10,6 +10,7 @@ import {
 import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { AuthService } from './auth.service';
 import { ConversationService } from './conversation.service';
+import { PresenceService } from './presence.service';
 import { apiErrorMessage } from './api-error';
 
 @Component({
@@ -76,7 +77,11 @@ import { apiErrorMessage } from './api-error';
                   }
                   <span class="min-w-0 flex-1">
                     <span class="block truncate text-sm font-medium">{{ otherMember(conversation) }}</span>
-                    <span class="block truncate text-[11px]" [class.text-slate-600]="!conversations.isUnread(conversation, auth.currentUser()?.id)" [class.text-slate-300]="conversations.isUnread(conversation, auth.currentUser()?.id)">{{ conversations.lastMessagePreview(conversation, auth.currentUser()?.id) }}</span>
+                    @if (presence.isTyping(conversation.id)) {
+                      <span class="block truncate text-[11px] text-violet-300">Escribiendo…</span>
+                    } @else {
+                      <span class="block truncate text-[11px]" [class.text-slate-600]="!conversations.isUnread(conversation, auth.currentUser()?.id)" [class.text-slate-300]="conversations.isUnread(conversation, auth.currentUser()?.id)">{{ conversations.lastMessagePreview(conversation, auth.currentUser()?.id) }}</span>
+                    }
                   </span>
                   @if (conversations.isUnread(conversation, auth.currentUser()?.id)) {
                     <span class="h-2 w-2 shrink-0 rounded-full bg-violet-400" aria-label="Mensaje sin leer"></span>
@@ -147,6 +152,7 @@ import { apiErrorMessage } from './api-error';
 export class WorkspaceComponent implements OnInit, OnDestroy {
   protected readonly auth = inject(AuthService);
   protected readonly conversations = inject(ConversationService);
+  protected readonly presence = inject(PresenceService);
   private readonly router = inject(Router);
   protected readonly logoutError = signal('');
   protected readonly confirmLogout = signal(false);
@@ -155,6 +161,7 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
   private refreshTimer?: number;
 
   ngOnInit(): void {
+    this.presence.connect();
     const userId = this.auth.currentUser()?.id;
     if (userId) {
       this.conversations.loadReadState(userId);
@@ -169,6 +176,7 @@ export class WorkspaceComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.presence.disconnect();
     if (this.refreshTimer !== undefined) {
       window.clearInterval(this.refreshTimer);
     }

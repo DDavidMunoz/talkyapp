@@ -1,12 +1,14 @@
 from rest_framework import serializers
 from django.urls import reverse
 from .models import Conversation, ConversationMember, Message
+from users.presence import is_user_online
 
 
 class ConversationMemberSerializer(serializers.ModelSerializer):
     user_id = serializers.UUIDField(source="user.id", read_only=True)
     username = serializers.CharField(source="user.username", read_only=True)
     avatar = serializers.SerializerMethodField()
+    is_online = serializers.SerializerMethodField()
 
     class Meta:
         model = ConversationMember
@@ -14,6 +16,7 @@ class ConversationMemberSerializer(serializers.ModelSerializer):
             "user_id",
             "username",
             "avatar",
+            "is_online",
             "role",
             "joined_at",
             "left_at",
@@ -27,6 +30,9 @@ class ConversationMemberSerializer(serializers.ModelSerializer):
 
     def get_avatar(self, obj):
         return obj.user.avatar.url if obj.user.avatar else None
+
+    def get_is_online(self, obj):
+        return is_user_online(obj.user)
 
 
 class ConversationListSerializer(serializers.ModelSerializer):
@@ -57,6 +63,18 @@ class ConversationListSerializer(serializers.ModelSerializer):
         messages = getattr(obj, "latest_messages", None)
         if not messages:
             return None
+        request = self.context.get("request")
+        membership = next(
+            (
+                member
+                for member in obj.members.all()
+                if request and member.user_id == request.user.pk
+            ),
+            None,
+        )
+        if membership and membership.cleared_at:
+            if messages[0].created_at <= membership.cleared_at:
+                return None
         return MessageSerializer(messages[0], context=self.context).data
 
 

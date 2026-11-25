@@ -46,7 +46,7 @@ import { apiErrorMessage } from './api-error';
                 }
                 <div class="min-w-0 flex-1">
                   <p class="truncate text-sm font-semibold">{{ person.name || person.username }}</p>
-                  <p class="mt-0.5 truncate text-xs text-slate-500">&#64;{{ person.username }}{{ person.last_seen ? ' · ' + lastSeen(person.last_seen) : '' }}</p>
+                  <p class="mt-0.5 truncate text-xs text-slate-500">&#64;{{ person.username }} · {{ person.is_online ? 'En línea' : person.last_seen ? lastSeen(person.last_seen) : 'Desconectado' }}</p>
                   @if (person.bio) { <p class="mt-1 truncate text-xs text-slate-400">{{ person.bio }}</p> }
                 </div>
                 <button type="button" (click)="message(person)" [disabled]="busyUserId() === person.id" class="shrink-0 rounded-xl border border-violet-400/20 bg-violet-500/10 px-3 py-2.5 text-xs font-semibold text-violet-200 transition hover:bg-violet-500/20 disabled:opacity-60 sm:px-4">

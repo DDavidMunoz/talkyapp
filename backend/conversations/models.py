@@ -67,6 +67,16 @@ class ConversationMember(models.Model):
         blank=True
     )
 
+    hidden_at = models.DateTimeField(
+        null=True,
+        blank=True
+    )
+
+    cleared_at = models.DateTimeField(
+        null=True,
+        blank=True
+    )
+
     class Meta:
         constraints = [
             models.UniqueConstraint(

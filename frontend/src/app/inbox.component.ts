@@ -1,7 +1,8 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { AuthService } from './auth.service';
-import { ConversationService } from './conversation.service';
+import { Conversation, ConversationService } from './conversation.service';
+import { apiErrorMessage } from './api-error';
 
 @Component({
   selector: 'app-inbox',
@@ -21,6 +22,9 @@ import { ConversationService } from './conversation.service';
 
       @if (conversations.error()) {
         <div role="alert" class="mt-5 rounded-xl border border-rose-400/20 bg-rose-400/[0.06] px-4 py-3 text-sm text-rose-200">{{ conversations.error() }}</div>
+      }
+      @if (actionError()) {
+        <div role="alert" class="mt-5 rounded-xl border border-rose-400/20 bg-rose-400/[0.06] px-4 py-3 text-sm text-rose-200">{{ actionError() }}</div>
       }
 
       <div class="mt-8 grid gap-5 lg:grid-cols-[1fr_290px]">
@@ -53,23 +57,28 @@ import { ConversationService } from './conversation.service';
             } @else {
               <div class="divide-y divide-white/[0.045]">
                 @for (conversation of filteredConversations(); track conversation.id) {
-                  <a [routerLink]="['/app/chat', conversation.id]" class="flex items-center gap-4 px-5 py-4 transition hover:bg-white/[0.025] sm:px-6">
-                    @if (otherAvatar(conversation); as avatarUrl) {
-                      <img [src]="avatarUrl" [alt]="otherMember(conversation)" class="h-11 w-11 shrink-0 rounded-full object-cover">
-                    } @else {
-                      <span class="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-gradient-to-br from-violet-500/25 to-indigo-500/20 font-semibold text-violet-200">{{ initial(otherMember(conversation)) }}</span>
-                    }
-                    <span class="min-w-0 flex-1">
-                      <span class="block truncate text-sm font-semibold text-slate-100">{{ otherMember(conversation) }}</span>
-                      <span class="mt-1 block truncate text-xs" [class.text-slate-300]="conversations.isUnread(conversation, auth.currentUser()?.id)" [class.text-slate-500]="!conversations.isUnread(conversation, auth.currentUser()?.id)">{{ conversations.lastMessagePreview(conversation, auth.currentUser()?.id) }}</span>
-                    </span>
-                    <span class="flex shrink-0 flex-col items-end gap-1">
-                      <span class="text-[10px]" [class.text-violet-300]="conversations.isUnread(conversation, auth.currentUser()?.id)" [class.text-slate-600]="!conversations.isUnread(conversation, auth.currentUser()?.id)">{{ dateLabel(conversation.last_message?.created_at || conversation.updated_at) }}</span>
-                      @if (conversations.isUnread(conversation, auth.currentUser()?.id)) {
-                        <span class="rounded-full bg-violet-600 px-2 py-0.5 text-[9px] font-bold text-white" aria-label="Mensaje sin leer">NUEVO</span>
+                  <div class="flex items-center gap-2 px-5 transition hover:bg-white/[0.025] sm:px-6">
+                    <a [routerLink]="['/app/chat', conversation.id]" class="flex min-w-0 flex-1 items-center gap-4 py-4">
+                      @if (otherAvatar(conversation); as avatarUrl) {
+                        <img [src]="avatarUrl" [alt]="otherMember(conversation)" class="h-11 w-11 shrink-0 rounded-full object-cover">
+                      } @else {
+                        <span class="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-gradient-to-br from-violet-500/25 to-indigo-500/20 font-semibold text-violet-200">{{ initial(otherMember(conversation)) }}</span>
                       }
-                    </span>
-                  </a>
+                      <span class="min-w-0 flex-1">
+                        <span class="block truncate text-sm font-semibold text-slate-100">{{ otherMember(conversation) }}</span>
+                        <span class="mt-1 block truncate text-xs" [class.text-slate-300]="conversations.isUnread(conversation, auth.currentUser()?.id)" [class.text-slate-500]="!conversations.isUnread(conversation, auth.currentUser()?.id)">{{ conversations.lastMessagePreview(conversation, auth.currentUser()?.id) }}</span>
+                      </span>
+                      <span class="flex shrink-0 flex-col items-end gap-1">
+                        <span class="text-[10px]" [class.text-violet-300]="conversations.isUnread(conversation, auth.currentUser()?.id)" [class.text-slate-600]="!conversations.isUnread(conversation, auth.currentUser()?.id)">{{ dateLabel(conversation.last_message?.created_at || conversation.updated_at) }}</span>
+                        @if (conversations.isUnread(conversation, auth.currentUser()?.id)) {
+                          <span class="rounded-full bg-violet-600 px-2 py-0.5 text-[9px] font-bold text-white" aria-label="Mensaje sin leer">NUEVO</span>
+                        }
+                      </span>
+                    </a>
+                    <button type="button" (click)="deleteConversation(conversation)" [disabled]="deletingConversation() === conversation.id" [attr.aria-label]="'Eliminar conversación con ' + otherMember(conversation)" title="Eliminar conversación" class="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-slate-600 transition hover:bg-rose-400/[0.08] hover:text-rose-200 disabled:opacity-50">
+                      {{ deletingConversation() === conversation.id ? '…' : '×' }}
+                    </button>
+                  </div>
                 }
               </div>
             }
@@ -100,12 +109,41 @@ import { ConversationService } from './conversation.service';
         </aside>
       </div>
     </section>
+    @if (conversationToDelete(); as conversation) {
+      <div class="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4 backdrop-blur-sm" (click)="cancelDelete()">
+        <section
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="delete-conversation-title"
+          aria-describedby="delete-conversation-description"
+          (click)="$event.stopPropagation()"
+          (keydown.escape)="cancelDelete()"
+          class="w-full max-w-sm rounded-2xl border border-white/10 bg-[#111323] p-6 shadow-2xl shadow-black/60"
+        >
+          <span class="grid h-11 w-11 place-items-center rounded-xl bg-rose-400/10 text-xl text-rose-300">!</span>
+          <h2 id="delete-conversation-title" class="mt-4 text-lg font-semibold">¿Eliminar esta conversación?</h2>
+          <p id="delete-conversation-description" class="mt-2 text-sm leading-6 text-slate-400">
+            Se eliminará el chat con {{ otherMember(conversation) }} solo para ti. La otra persona conservará sus mensajes y, si te escribe de nuevo, la conversación volverá a aparecer.
+          </p>
+          <div class="mt-6 flex justify-end gap-3">
+            <button type="button" (click)="cancelDelete()" [disabled]="!!deletingConversation()" class="rounded-xl border border-white/10 px-4 py-2.5 text-sm font-medium text-slate-300 transition hover:bg-white/[0.05] disabled:opacity-50">Cancelar</button>
+            <button type="button" (click)="confirmDeleteConversation()" [disabled]="!!deletingConversation()" class="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-500 disabled:opacity-60">
+              @if (deletingConversation()) { <span class="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white"></span> }
+              {{ deletingConversation() ? 'Eliminando…' : 'Eliminar conversación' }}
+            </button>
+          </div>
+        </section>
+      </div>
+    }
   `,
 })
 export class InboxComponent {
   protected readonly conversations = inject(ConversationService);
   protected readonly auth = inject(AuthService);
   protected readonly search = signal('');
+  protected readonly actionError = signal('');
+  protected readonly deletingConversation = signal('');
+  protected readonly conversationToDelete = signal<Conversation | null>(null);
   protected readonly filteredConversations = computed(() => {
     const query = this.search().trim().toLowerCase();
     if (!query) {
@@ -120,6 +158,39 @@ export class InboxComponent {
     const target = event.target;
     if (target instanceof HTMLInputElement) {
       this.search.set(target.value);
+    }
+  }
+
+  protected async deleteConversation(conversation: Conversation): Promise<void> {
+    if (this.deletingConversation()) {
+      return;
+    }
+    this.conversationToDelete.set(conversation);
+  }
+
+  protected cancelDelete(): void {
+    if (!this.deletingConversation()) {
+      this.conversationToDelete.set(null);
+    }
+  }
+
+  protected async confirmDeleteConversation(): Promise<void> {
+    const conversation = this.conversationToDelete();
+    if (!conversation || this.deletingConversation()) {
+      return;
+    }
+    this.actionError.set('');
+    this.deletingConversation.set(conversation.id);
+    try {
+      await this.conversations.deleteConversation(conversation.id);
+      this.conversationToDelete.set(null);
+    } catch (error) {
+      this.actionError.set(
+        apiErrorMessage(error, 'No se pudo eliminar la conversación.')
+      );
+      this.conversationToDelete.set(null);
+    } finally {
+      this.deletingConversation.set('');
     }
   }
 

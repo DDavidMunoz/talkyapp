@@ -18,7 +18,23 @@ import {
   Conversation,
   ConversationService,
 } from './conversation.service';
+import { PresenceService } from './presence.service';
 import { apiErrorMessage } from './api-error';
+
+interface TypingEvent {
+  type: 'typing';
+  conversation: string;
+  user_id: string;
+  username: string;
+  is_typing: boolean;
+}
+
+interface PresenceEvent {
+  type: 'presence';
+  user_id: string;
+  is_online: boolean;
+  last_seen: string;
+}
 
 function isChatMessage(value: unknown): value is ChatMessage {
   if (!value || typeof value !== 'object') {
@@ -31,6 +47,33 @@ function isChatMessage(value: unknown): value is ChatMessage {
     typeof message['sender_id'] === 'string' &&
     typeof message['content'] === 'string' &&
     typeof message['created_at'] === 'string'
+  );
+}
+
+function isTypingEvent(value: unknown): value is TypingEvent {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const event = value as Record<string, unknown>;
+  return (
+    event['type'] === 'typing' &&
+    typeof event['conversation'] === 'string' &&
+    typeof event['user_id'] === 'string' &&
+    typeof event['username'] === 'string' &&
+    typeof event['is_typing'] === 'boolean'
+  );
+}
+
+function isPresenceEvent(value: unknown): value is PresenceEvent {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const event = value as Record<string, unknown>;
+  return (
+    event['type'] === 'presence' &&
+    typeof event['user_id'] === 'string' &&
+    typeof event['is_online'] === 'boolean' &&
+    typeof event['last_seen'] === 'string'
   );
 }
 
@@ -48,12 +91,14 @@ function isChatMessage(value: unknown): value is ChatMessage {
         }
         <div class="min-w-0 flex-1">
           <h1 class="truncate text-sm font-semibold">{{ contactName() }}</h1>
-          <p class="mt-0.5 flex items-center gap-1.5 text-xs text-emerald-300">
-            <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
-            En línea
+          <p class="mt-0.5 flex items-center gap-1.5 text-xs" [class.text-emerald-300]="contactOnline()" [class.text-slate-500]="!contactOnline()">
+            <span class="h-1.5 w-1.5 rounded-full" [class.bg-emerald-400]="contactOnline()" [class.bg-slate-500]="!contactOnline()"></span>
+            {{ contactOnline() ? 'En línea' : 'Desconectado' }}
           </p>
         </div>
-        <span class="hidden rounded-lg border border-white/[0.07] px-3 py-2 text-xs text-slate-500 sm:inline-flex">Chat directo</span>
+        <button type="button" (click)="requestClearChat()" [disabled]="clearingChat() || loading() || sending()" aria-label="Vaciar chat" title="Vaciar chat" class="rounded-lg border border-white/[0.07] px-2.5 py-2 text-xs text-slate-400 transition hover:border-rose-400/20 hover:bg-rose-400/[0.06] hover:text-rose-200 disabled:cursor-not-allowed disabled:opacity-50 sm:px-3">
+          {{ clearingChat() ? 'Vaciando…' : 'Vaciar chat' }}
+        </button>
       </header>
 
       @if (errorMessage()) {
@@ -66,31 +111,40 @@ function isChatMessage(value: unknown): value is ChatMessage {
             <span class="h-6 w-6 animate-spin rounded-full border-2 border-violet-400/20 border-t-violet-400"></span>
             Cargando conversación…
           </div>
-        } @else if (messages().length === 0) {
-          <div class="flex h-full flex-col items-center justify-center text-center">
-            <span class="grid h-14 w-14 place-items-center rounded-2xl border border-white/[0.06] bg-white/[0.025] text-2xl text-violet-300">◉</span>
-            <h2 class="mt-4 font-semibold">Di hola a {{ contactName() }}</h2>
-            <p class="mt-2 max-w-xs text-sm leading-6 text-slate-500">Esta es una conversación nueva. Envía un mensaje o comparte un archivo para empezar.</p>
-          </div>
         } @else {
           <div class="mx-auto flex max-w-3xl flex-col gap-4">
-            <p class="mb-2 text-center text-[11px] text-slate-600">Esta conversación es entre tú y {{ contactName() }}.</p>
-            @for (message of messages(); track message.id) {
-              <article class="flex max-w-[88%] flex-col gap-1 sm:max-w-[75%]" [class.self-end]="message.sender_id === auth.currentUser()?.id" [class.self-start]="message.sender_id !== auth.currentUser()?.id">
-                @if (message.sender_id !== auth.currentUser()?.id) {
-                  <span class="px-1 text-[11px] font-medium text-violet-300">{{ message.sender_username }}</span>
-                }
-                <div [class]="message.sender_id === auth.currentUser()?.id ? 'rounded-2xl rounded-br-md bg-gradient-to-br from-violet-600 to-indigo-600 px-4 py-3 text-sm leading-6 text-white' : 'rounded-2xl rounded-bl-md border border-white/[0.06] bg-[#141729] px-4 py-3 text-sm leading-6 text-slate-200'">
-                  @if (message.content) { <p class="whitespace-pre-wrap break-words">{{ message.content }}</p> }
-                  @if (message.file_name) {
-                    <a [href]="conversations.attachmentUrl(message.conversation, message.id)" [download]="message.file_name" class="mt-2 flex items-center gap-3 rounded-xl border border-white/10 bg-black/10 px-3 py-2.5 transition hover:bg-black/20">
-                      <span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-white/10 text-lg">↧</span>
-                      <span class="min-w-0 flex-1"><span class="block max-w-[200px] truncate text-xs font-semibold">{{ message.file_name }}</span><span class="mt-0.5 block text-[10px] opacity-70">Descargar archivo</span></span>
-                    </a>
+            @if (messages().length === 0) {
+              <div class="flex h-full flex-col items-center justify-center text-center">
+                <span class="grid h-14 w-14 place-items-center rounded-2xl border border-white/[0.06] bg-white/[0.025] text-2xl text-violet-300">◉</span>
+                <h2 class="mt-4 font-semibold">Di hola a {{ contactName() }}</h2>
+                <p class="mt-2 max-w-xs text-sm leading-6 text-slate-500">Esta es una conversación nueva. Envía un mensaje o comparte un archivo para empezar.</p>
+              </div>
+            } @else {
+              <p class="mb-2 text-center text-[11px] text-slate-600">Esta conversación es entre tú y {{ contactName() }}.</p>
+              @for (message of messages(); track message.id) {
+                <article class="flex max-w-[88%] flex-col gap-1 sm:max-w-[75%]" [class.self-end]="message.sender_id === auth.currentUser()?.id" [class.self-start]="message.sender_id !== auth.currentUser()?.id">
+                  @if (message.sender_id !== auth.currentUser()?.id) {
+                    <span class="px-1 text-[11px] font-medium text-violet-300">{{ message.sender_username }}</span>
                   }
-                </div>
-                <time class="px-1 text-[10px] text-slate-600" [class.text-right]="message.sender_id === auth.currentUser()?.id">{{ timeLabel(message.created_at) }}</time>
-              </article>
+                  <div [class]="message.sender_id === auth.currentUser()?.id ? 'rounded-2xl rounded-br-md bg-gradient-to-br from-violet-600 to-indigo-600 px-4 py-3 text-sm leading-6 text-white' : 'rounded-2xl rounded-bl-md border border-white/[0.06] bg-[#141729] px-4 py-3 text-sm leading-6 text-slate-200'">
+                    @if (message.content) { <p class="whitespace-pre-wrap break-words">{{ message.content }}</p> }
+                    @if (message.file_name) {
+                      <a [href]="conversations.attachmentUrl(message.conversation, message.id)" [download]="message.file_name" class="mt-2 flex items-center gap-3 rounded-xl border border-white/10 bg-black/10 px-3 py-2.5 transition hover:bg-black/20">
+                        <span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-white/10 text-lg">↧</span>
+                        <span class="min-w-0 flex-1"><span class="block max-w-[200px] truncate text-xs font-semibold">{{ message.file_name }}</span><span class="mt-0.5 block text-[10px] opacity-70">Descargar archivo</span></span>
+                      </a>
+                    }
+                  </div>
+                  <time class="px-1 text-[10px] text-slate-600" [class.text-right]="message.sender_id === auth.currentUser()?.id">{{ timeLabel(message.created_at) }}</time>
+                </article>
+              }
+            }
+            @if (remoteTyping()) {
+              <div role="status" [attr.aria-label]="contactName() + ' está escribiendo'" class="flex w-fit items-center gap-1 rounded-2xl rounded-bl-md border border-white/[0.06] bg-[#141729] px-4 py-3">
+                <span class="typing-dot h-1.5 w-1.5 rounded-full bg-slate-300"></span>
+                <span class="typing-dot h-1.5 w-1.5 rounded-full bg-slate-300"></span>
+                <span class="typing-dot h-1.5 w-1.5 rounded-full bg-slate-300"></span>
+              </div>
             }
           </div>
         }
@@ -105,20 +159,45 @@ function isChatMessage(value: unknown): value is ChatMessage {
         }
         <form [formGroup]="form" (ngSubmit)="send()" class="mx-auto flex max-w-3xl items-end gap-2 rounded-2xl border border-white/[0.08] bg-[#111323] p-2 focus-within:border-violet-400/30">
           <input #attachmentInput type="file" class="hidden" (change)="selectAttachment($event)">
-          <button type="button" (click)="attachmentInput.click()" [disabled]="sending()" class="grid h-10 w-10 shrink-0 place-items-center rounded-xl text-lg text-slate-500 transition hover:bg-white/[0.06] hover:text-violet-200 disabled:opacity-50" aria-label="Adjuntar archivo">＋</button>
+          <button type="button" (click)="attachmentInput.click()" [disabled]="sending() || clearingChat()" class="grid h-10 w-10 shrink-0 place-items-center rounded-xl text-lg text-slate-500 transition hover:bg-white/[0.06] hover:text-violet-200 disabled:opacity-50" aria-label="Adjuntar archivo">＋</button>
           <textarea formControlName="content" rows="1" maxlength="10000" placeholder="Escribe un mensaje…" (keydown)="onMessageKeydown($event)" class="max-h-32 min-h-10 flex-1 resize-y bg-transparent px-1 py-2.5 text-sm text-white outline-none placeholder:text-slate-600"></textarea>
-          <button type="submit" [disabled]="sending() || (!form.controls.content.value.trim() && !attachment())" class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-violet-600 text-white shadow-lg shadow-violet-950/30 transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:bg-white/[0.06] disabled:text-slate-600 disabled:shadow-none" aria-label="Enviar mensaje">
+          <button type="submit" [disabled]="sending() || clearingChat() || (!form.controls.content.value.trim() && !attachment())" class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-violet-600 text-white shadow-lg shadow-violet-950/30 transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:bg-white/[0.06] disabled:text-slate-600 disabled:shadow-none" aria-label="Enviar mensaje">
             @if (sending()) { <span class="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white"></span> } @else { <span class="text-sm">➤</span> }
           </button>
         </form>
         <p class="mx-auto mt-2 max-w-3xl px-1 text-[10px] text-slate-600">Puedes adjuntar archivos de hasta 25 MB. Pulsa Enter para enviar.</p>
       </div>
     </section>
+    @if (showClearConfirmation()) {
+      <div class="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4 backdrop-blur-sm" (click)="cancelClearChat()">
+        <section
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="clear-chat-title"
+          aria-describedby="clear-chat-description"
+          (click)="$event.stopPropagation()"
+          (keydown.escape)="cancelClearChat()"
+          class="w-full max-w-sm rounded-2xl border border-white/10 bg-[#111323] p-6 shadow-2xl shadow-black/60"
+        >
+          <span class="grid h-11 w-11 place-items-center rounded-xl bg-rose-400/10 text-xl text-rose-300">!</span>
+          <h2 id="clear-chat-title" class="mt-4 text-lg font-semibold">¿Vaciar este chat?</h2>
+          <p id="clear-chat-description" class="mt-2 text-sm leading-6 text-slate-400">Se quitarán los mensajes de esta conversación solo para ti. {{ contactName() }} conservará sus mensajes.</p>
+          <div class="mt-6 flex justify-end gap-3">
+            <button type="button" (click)="cancelClearChat()" [disabled]="clearingChat()" class="rounded-xl border border-white/10 px-4 py-2.5 text-sm font-medium text-slate-300 transition hover:bg-white/[0.05] disabled:opacity-50">Cancelar</button>
+            <button type="button" (click)="clearChat()" [disabled]="clearingChat()" class="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-500 disabled:opacity-60">
+              @if (clearingChat()) { <span class="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white"></span> }
+              {{ clearingChat() ? 'Vaciando…' : 'Vaciar chat' }}
+            </button>
+          </div>
+        </section>
+      </div>
+    }
   `,
 })
 export class ChatComponent implements AfterViewInit, OnDestroy {
   protected readonly auth = inject(AuthService);
   protected readonly conversations = inject(ConversationService);
+  protected readonly presence = inject(PresenceService);
   private readonly route = inject(ActivatedRoute);
   private readonly destroyRef = inject(DestroyRef);
   private readonly fb = inject(FormBuilder).nonNullable;
@@ -138,9 +217,19 @@ export class ChatComponent implements AfterViewInit, OnDestroy {
       null
     );
   });
+  protected readonly contactOnline = computed(() => {
+    const currentId = this.auth.currentUser()?.id;
+    const contact = this.currentConversation()?.members.find(
+      (member) => member.user_id !== currentId
+    );
+    return !!contact && this.presence.isOnline(contact.user_id);
+  });
   protected readonly messages = signal<ChatMessage[]>([]);
+  protected readonly remoteTyping = signal(false);
   protected readonly loading = signal(true);
   protected readonly sending = signal(false);
+  protected readonly clearingChat = signal(false);
+  protected readonly showClearConfirmation = signal(false);
   protected readonly live = signal(false);
   protected readonly connectionState = signal<'connecting' | 'connected' | 'reconnecting'>('connecting');
   protected readonly connectionIssue = signal('');
@@ -151,6 +240,11 @@ export class ChatComponent implements AfterViewInit, OnDestroy {
   });
   private socket?: WebSocket;
   private reconnectTimer?: number;
+  private localTypingTimer?: number;
+  private typingRefreshTimer?: number;
+  private remoteTypingTimer?: number;
+  private remoteTypingUserId?: string;
+  private localTyping = false;
   private reconnectAttempts = 0;
 
   constructor() {
@@ -160,6 +254,9 @@ export class ChatComponent implements AfterViewInit, OnDestroy {
         void this.openConversation(id);
       }
     });
+    this.form.controls.content.valueChanges
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((content) => this.onContentChanged(content));
   }
 
   ngAfterViewInit(): void {
@@ -167,11 +264,16 @@ export class ChatComponent implements AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.stopLocalTyping();
+    this.clearRemoteTyping(this.conversationId());
     this.socket?.close();
     this.clearConnectionTimers();
   }
 
   private async openConversation(id: string): Promise<void> {
+    const previousConversationId = this.conversationId();
+    this.stopLocalTyping();
+    this.clearRemoteTyping(previousConversationId);
     this.clearConnectionTimers();
     this.socket?.close();
     this.socket = undefined;
@@ -194,6 +296,12 @@ export class ChatComponent implements AfterViewInit, OnDestroy {
       }
       this.currentConversation.set(conversation);
       this.setContactName(conversation);
+      const peer = conversation.members.find(
+        (member) => member.user_id !== this.auth.currentUser()?.id
+      );
+      if (peer) {
+        this.presence.setOnline(peer.user_id, !!peer.is_online);
+      }
       this.messages.set(messages);
       const lastMessage = messages.at(-1);
       if (lastMessage) {
@@ -244,6 +352,9 @@ export class ChatComponent implements AfterViewInit, OnDestroy {
         this.connectionIssue.set('');
         this.reconnectAttempts = 0;
         this.clearReconnectTimer();
+        if (this.localTyping) {
+          this.sendTypingState(true);
+        }
         void this.reconcileMessages(id);
       }
     };
@@ -253,6 +364,10 @@ export class ChatComponent implements AfterViewInit, OnDestroy {
         if (isChatMessage(payload) && payload.conversation === this.conversationId()) {
           this.addMessage(payload);
           this.conversations.markRead(payload.conversation, payload.id);
+        } else if (isTypingEvent(payload) && payload.conversation === this.conversationId()) {
+          this.handleTypingEvent(payload);
+        } else if (isPresenceEvent(payload)) {
+          this.presence.setOnline(payload.user_id, payload.is_online);
         } else if (
           payload &&
           typeof payload === 'object' &&
@@ -290,6 +405,7 @@ export class ChatComponent implements AfterViewInit, OnDestroy {
       return;
     }
     this.live.set(false);
+    this.clearRemoteTyping(id);
     this.connectionState.set('reconnecting');
     this.scheduleReconnect(id);
   }
@@ -340,13 +456,115 @@ export class ChatComponent implements AfterViewInit, OnDestroy {
 
   private clearConnectionTimers(): void {
     this.clearReconnectTimer();
+    this.clearLocalTypingTimer();
+    this.clearRemoteTypingTimer();
+  }
+
+  private onContentChanged(content: string): void {
+    if (content.trim() && !this.sending()) {
+      if (!this.localTyping) {
+        this.setLocalTyping(true);
+      }
+      this.clearLocalTypingTimer();
+      this.localTypingTimer = window.setTimeout(
+        () => this.setLocalTyping(false),
+        1800
+      );
+      return;
+    }
+    this.stopLocalTyping();
+  }
+
+  private setLocalTyping(isTyping: boolean): void {
+    if (this.localTyping === isTyping) {
+      return;
+    }
+    this.localTyping = isTyping;
+    this.sendTypingState(isTyping);
+    if (isTyping) {
+      this.clearTypingRefreshTimer();
+      this.typingRefreshTimer = window.setInterval(
+        () => this.sendTypingState(true),
+        2500
+      );
+    } else {
+      this.clearTypingRefreshTimer();
+    }
+  }
+
+  private sendTypingState(isTyping: boolean): void {
+    if (this.socket?.readyState === WebSocket.OPEN) {
+      this.socket.send(JSON.stringify({ type: 'typing', is_typing: isTyping }));
+    }
+  }
+
+  private stopLocalTyping(): void {
+    this.clearLocalTypingTimer();
+    this.setLocalTyping(false);
+  }
+
+  private clearLocalTypingTimer(): void {
+    if (this.localTypingTimer !== undefined) {
+      window.clearTimeout(this.localTypingTimer);
+      this.localTypingTimer = undefined;
+    }
+  }
+
+  private clearTypingRefreshTimer(): void {
+    if (this.typingRefreshTimer !== undefined) {
+      window.clearInterval(this.typingRefreshTimer);
+      this.typingRefreshTimer = undefined;
+    }
+  }
+
+  private handleTypingEvent(event: TypingEvent): void {
+    if (event.user_id === this.auth.currentUser()?.id) {
+      return;
+    }
+    this.presence.setTyping(
+      event.conversation,
+      event.user_id,
+      event.is_typing
+    );
+    if (event.is_typing) {
+      this.remoteTyping.set(true);
+      this.remoteTypingUserId = event.user_id;
+      this.clearRemoteTypingTimer();
+      this.remoteTypingTimer = window.setTimeout(
+        () => this.clearRemoteTyping(this.conversationId()),
+        5000
+      );
+    } else if (this.remoteTypingUserId === event.user_id) {
+      this.clearRemoteTyping(event.conversation);
+    }
+  }
+
+  private clearRemoteTyping(conversationId: string): void {
+    this.clearRemoteTypingTimer();
+    this.presence.clearTyping(conversationId);
+    if (this.remoteTypingUserId) {
+      this.remoteTypingUserId = undefined;
+    }
+    this.remoteTyping.set(false);
+  }
+
+  private clearRemoteTypingTimer(): void {
+    if (this.remoteTypingTimer !== undefined) {
+      window.clearTimeout(this.remoteTypingTimer);
+      this.remoteTypingTimer = undefined;
+    }
   }
 
   protected async send(): Promise<void> {
     const content = this.form.controls.content.value;
     const file = this.attachment();
     const conversationId = this.conversationId();
-    if ((!content.trim() && !file) || !conversationId || this.sending()) {
+    if (
+      (!content.trim() && !file) ||
+      !conversationId ||
+      this.sending() ||
+      this.clearingChat()
+    ) {
       return;
     }
     if (file && file.size > 25 * 1024 * 1024) {
@@ -355,6 +573,7 @@ export class ChatComponent implements AfterViewInit, OnDestroy {
     }
 
     this.errorMessage.set('');
+    this.stopLocalTyping();
     this.sending.set(true);
     try {
       const message = await this.conversations.sendMessage(
@@ -373,6 +592,45 @@ export class ChatComponent implements AfterViewInit, OnDestroy {
       this.errorMessage.set(apiErrorMessage(error, 'No se pudo enviar el mensaje.'));
     } finally {
       this.sending.set(false);
+    }
+  }
+
+  protected requestClearChat(): void {
+    if (
+      !this.conversationId() ||
+      this.clearingChat() ||
+      this.sending() ||
+      this.loading()
+    ) {
+      return;
+    }
+    this.showClearConfirmation.set(true);
+  }
+
+  protected cancelClearChat(): void {
+    if (!this.clearingChat()) {
+      this.showClearConfirmation.set(false);
+    }
+  }
+
+  protected async clearChat(): Promise<void> {
+    const conversationId = this.conversationId();
+    if (!conversationId || this.clearingChat() || this.sending()) {
+      return;
+    }
+    this.errorMessage.set('');
+    this.clearingChat.set(true);
+    try {
+      await this.conversations.clearChat(conversationId);
+      this.messages.set([]);
+      this.showClearConfirmation.set(false);
+    } catch (error) {
+      this.errorMessage.set(
+        apiErrorMessage(error, 'No se pudo vaciar el chat.')
+      );
+      this.showClearConfirmation.set(false);
+    } finally {
+      this.clearingChat.set(false);
     }
   }
 
