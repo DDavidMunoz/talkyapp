@@ -60,5 +60,5 @@ export const authInterceptor: HttpInterceptorFn = (request, next) => {
           })
         );
     })
-  ); // <-- Aquí faltaba el cierre correcto del pipe general
+  ); 
 };

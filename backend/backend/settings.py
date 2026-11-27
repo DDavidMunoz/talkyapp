@@ -31,7 +31,7 @@ ALLOWED_HOSTS = [
     host.strip()
     for host in os.getenv(
         "ALLOWED_HOSTS",
-        "localhost,127.0.0.1,[::1],10.15.154.24,*", # <-- Añadida la IP limpia y un * por si acaso en LAN
+        "localhost,127.0.0.1,[::1],10.15.154.24,*",
     ).split(",")
     if host.strip()
 ]
@@ -53,11 +53,11 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
     'rest_framework_simplejwt.token_blacklist',
-    'corsheaders', # <-- Agregar aquí
+    'corsheaders', 
 ]
 
 MIDDLEWARE = [
-    'corsheaders.middleware.CorsMiddleware', # <-- DEBE IR LO MÁS ARRIBA POSIBLE
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -123,7 +123,7 @@ SIMPLE_JWT = {
     # --- Configuración de la cookie de autenticación ---
     "AUTH_COOKIE": "access_token", 
     "AUTH_COOKIE_DOMAIN": None,
-    "AUTH_COOKIE_SECURE": False,   # False porque estás usando http:// localmente
+    "AUTH_COOKIE_SECURE": False,   
     "AUTH_COOKIE_HTTP_ONLY": True,
     "AUTH_COOKIE_SAMESITE": "Lax",
 }
@@ -185,5 +185,4 @@ CORS_ALLOWED_ORIGINS = [
     "http://10.15.154.157:4200",
 ]
 
-# ESTO ES VITAL: Permite que Angular reciba y envíe la cookie JWT
 CORS_ALLOW_CREDENTIALS = True
